@@ -1,0 +1,495 @@
+UDP--pogadjanje
+--------------------klijent
+// UDP client that uses blocking sockets
+#define _WINSOCK_DEPRECATED_NO_WARNINGS
+
+#define WIN32_LEAN_AND_MEAN
+
+#include <windows.h>
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include "conio.h"
+
+#pragma comment (lib, "Ws2_32.lib")
+#pragma comment (lib, "Mswsock.lib")
+#pragma comment (lib, "AdvApi32.lib")
+
+			
+#define BUFFER_SIZE 512						// Size of buffer that will be used for sending and receiving messages to client
+
+
+int main()
+{
+    char dataBuffer[BUFFER_SIZE];
+    int iResult;
+    WSADATA wsaData;
+    // Initialize windows sockets library for this process
+    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0)
+    {
+        printf("WSAStartup failed with error: %d\n", WSAGetLastError());
+        return 1;
+    }
+  
+
+    printf("Izaberite port: (33030 ili 33031)");//bira port (ovo nije uvek potrebno)
+    gets_s(dataBuffer, BUFFER_SIZE);
+    unsigned short port = atoi(dataBuffer);
+    sockaddr_in serverAddr;
+    serverAddr.sin_family = AF_INET;
+    serverAddr.sin_port = htons(port);
+    serverAddr.sin_addr.s_addr = inet_addr("127.0.0.1");
+
+    SOCKET clientSocket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (clientSocket == INVALID_SOCKET) {
+        printf("Greska pri pravljenju socketa");
+        closesocket(clientSocket);
+        WSACleanup();
+        return 1;
+    }
+    ////////////  A
+//ovo uvek isto   |
+    do {
+        printf("Prosaljite \"Prijava\" ");//ako treba prijava/konekcija ili tako nesto 
+        gets_s(dataBuffer, BUFFER_SIZE);
+    } while (strcmp(dataBuffer, "Prijava")!=0);
+
+    iResult = sendto(clientSocket, dataBuffer, strlen(dataBuffer), 0,//salje prijavu
+        (SOCKADDR*)&serverAddr, sizeof(serverAddr));
+    if (iResult == SOCKET_ERROR)
+    {
+        printf("sendto failed with error: %d\n", WSAGetLastError());
+        closesocket(clientSocket);
+        WSACleanup();
+        return 1;
+    }
+
+    int senderAddrSize = sizeof(serverAddr);
+
+    //prima poruku da moze da pocne da pogadja
+    iResult = recvfrom(clientSocket, dataBuffer, BUFFER_SIZE, 0, (SOCKADDR*)&serverAddr,
+        &senderAddrSize);
+    if (iResult == SOCKET_ERROR) {
+        printf("Greska pri prijemu poruke");
+        closesocket(clientSocket);
+        WSACleanup();
+        return 1;
+    }
+    dataBuffer[iResult] = '\0';//printa sta je poslao server
+    printf("%s", dataBuffer);
+
+    //**prima zadatu rec
+    iResult = recvfrom(clientSocket, dataBuffer, BUFFER_SIZE, 0, (SOCKADDR*)&serverAddr,
+        &senderAddrSize);
+    if (iResult == SOCKET_ERROR) {
+        printf("Greska pri prijemu poruke");
+        closesocket(clientSocket);
+        WSACleanup();
+        return 1;
+    }
+    dataBuffer[iResult] = '\0';
+    char tacnaRec[BUFFER_SIZE];//cuva sta je poslao server
+    strcpy_s(tacnaRec, dataBuffer);
+    
+
+    char prevRec[BUFFER_SIZE];
+
+    while (1) {
+
+        printf("Unesite slova za pogadjanje: ");
+        gets_s(dataBuffer, BUFFER_SIZE);
+
+        iResult = sendto(clientSocket, dataBuffer, strlen(dataBuffer), 0,//salje serveru
+            (SOCKADDR*)&serverAddr, sizeof(serverAddr));
+        if (iResult == SOCKET_ERROR)
+        {
+            printf("sendto failed with error: %d\n", WSAGetLastError());
+            closesocket(clientSocket);
+            WSACleanup();
+            return 1;
+        }
+
+        if (strcmp(dataBuffer, "kraj") == 0)//prekid
+        {
+            break;
+        }
+
+        iResult = recvfrom(clientSocket, dataBuffer, BUFFER_SIZE, 0, (SOCKADDR*)&serverAddr,
+            &senderAddrSize);
+        if (iResult == SOCKET_ERROR)
+        {
+            printf("recv failed with error: %d\n", WSAGetLastError());
+            closesocket(clientSocket);
+            WSACleanup();
+            return 1;
+
+        }
+        dataBuffer[iResult] = '\0';
+        printf("REC: %s\n", dataBuffer);
+        if (strcmp(dataBuffer, "Pogodjena je rec") == 0) {
+            printf("Drugi klijent je pogodio rec. IZGUBIO SI\n");
+            break;
+        }
+
+
+        if (strcmp(dataBuffer, prevRec) == 0) {
+            printf("NISI pogodio slovo blokiram na 2s\n");
+            Sleep(2000);
+        }
+        else {
+            printf("pogodio si slovo blokiram na 1s\n");
+            Sleep(1000);
+        }
+
+        strcpy_s(prevRec, dataBuffer);
+
+        if (strcmp(prevRec, tacnaRec) == 0) {
+            printf("Pogodio si rec. POBEDA\n");
+            const char* secret_message = "Pogodjena je rec";
+            iResult = sendto(clientSocket, secret_message, strlen(secret_message), 0,
+                (SOCKADDR*)&serverAddr, sizeof(serverAddr));
+            if (iResult == SOCKET_ERROR)
+            {
+                printf("sendto failed with error: %d\n", WSAGetLastError());
+                closesocket(clientSocket);
+                WSACleanup();
+                return 1;
+            }
+            break;
+        }
+
+    }
+
+    printf("Press any to exit..");
+    _getch();
+
+    iResult = closesocket(clientSocket);
+    if (iResult == SOCKET_ERROR) {
+        printf("Greska pri zatvaranju socketa");
+        closesocket(clientSocket);
+        WSACleanup();
+        return 1;
+    }
+
+    WSACleanup();
+    return 0;
+}
+------------------server
+// UDP server that use blocking sockets
+#define _WINSOCK_DEPRECATED_NO_WARNINGS
+
+#define WIN32_LEAN_AND_MEAN
+
+#include <windows.h>
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include "conio.h"
+
+#pragma comment (lib, "Ws2_32.lib")
+#pragma comment (lib, "Mswsock.lib")
+#pragma comment (lib, "AdvApi32.lib")
+
+	// Port number of server that will be used for communication with clients
+#define BUFFER_SIZE 512		// Size of buffer that will be used for sending and receiving messages to clients
+#define SERVER_PORT1 33030
+#define SERVER_PORT2 33031
+int main()
+{
+    char dataBuffer[BUFFER_SIZE];
+    char pogRec[BUFFER_SIZE];
+    char pogRec2[BUFFER_SIZE];
+    int iResult;
+    WSADATA wsaData;
+    // Initialize windows sockets library for this process
+    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0)
+    {
+        printf("WSAStartup failed with error: %d\n", WSAGetLastError());
+        return 1;
+    }
+
+    sockaddr_in serverAddr1;
+    memset((char*)&serverAddr1, 0, sizeof(serverAddr1));
+    serverAddr1.sin_family = AF_INET;
+    serverAddr1.sin_port = htons(SERVER_PORT1);
+    serverAddr1.sin_addr.s_addr = inet_addr("127.0.0.1");
+
+    sockaddr_in serverAddr2;
+    memset((char*)&serverAddr2, 0, sizeof(serverAddr2));
+    serverAddr2.sin_family = AF_INET;
+    serverAddr2.sin_port = htons(SERVER_PORT2);
+    serverAddr2.sin_addr.s_addr = inet_addr("127.0.0.1");
+
+    SOCKET serverSocket1 = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (serverSocket1 == INVALID_SOCKET) {
+        printf("Greska pri pravljenju socketa");
+        closesocket(serverSocket1);
+        WSACleanup();
+        return 1;
+    }
+
+    SOCKET serverSocket2 = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (serverSocket2 == INVALID_SOCKET) {
+        printf("Greska pri pravljenju socketa");
+        closesocket(serverSocket2);
+        closesocket(serverSocket1);
+        WSACleanup();
+        return 1;
+    }
+
+    iResult = bind(serverSocket1, (struct sockaddr*)&serverAddr1,
+        sizeof(serverAddr1));
+    if (iResult == SOCKET_ERROR) {
+        printf("Greska pri bindu socketa");
+        closesocket(serverSocket1);
+        closesocket(serverSocket2);
+        WSACleanup();
+        return 1;
+    }
+
+    iResult = bind(serverSocket2, (struct sockaddr*)&serverAddr2,
+        sizeof(serverAddr2));
+    if (iResult == SOCKET_ERROR) {
+        printf("Greska pri bindu socketa");
+        closesocket(serverSocket1);
+        closesocket(serverSocket2);
+        WSACleanup();
+        return 1;
+    }
+    //uvek isto
+
+    printf("U igri \"Pogadjanje reci\" ucestvovace: \n");
+
+    sockaddr_in clientAddr;
+    memset((char*)&clientAddr, 0, sizeof(clientAddr));
+    sockaddr_in clientAddr2;
+    memset((char*)&clientAddr, 0, sizeof(clientAddr));
+    memset(dataBuffer, 0, BUFFER_SIZE);
+
+    int senderAddrSize = sizeof(clientAddr);
+//prijave one
+    iResult = recvfrom(serverSocket1, dataBuffer, BUFFER_SIZE, 0, (SOCKADDR*)&clientAddr,
+        &senderAddrSize);
+    if (iResult == SOCKET_ERROR) {
+        printf("Greska pri prijemu poruke");
+        closesocket(serverSocket1);
+        closesocket(serverSocket2);
+        WSACleanup();
+        return 1;
+    }
+    printf("Igrac 1: %s %d\n", inet_ntoa(clientAddr.sin_addr), ntohs(clientAddr.sin_port));
+    
+
+    
+
+    iResult = recvfrom(serverSocket2, dataBuffer, BUFFER_SIZE, 0, (SOCKADDR*)&clientAddr2,
+        &senderAddrSize);
+    if (iResult == SOCKET_ERROR) {
+        printf("Greska pri prijemu poruke");
+        closesocket(serverSocket1);
+        closesocket(serverSocket2);
+        WSACleanup();
+        return 1;
+    }
+    printf("Igrac 2: %s %d\n", inet_ntoa(clientAddr2.sin_addr), ntohs(clientAddr2.sin_port));
+
+    char zadRec[BUFFER_SIZE];
+    printf("Unesite rec za pogadanje: ");
+    gets_s(zadRec, BUFFER_SIZE);
+    
+
+    const char* secret_message = "Pocinje igra. Pogadjate rec!\n";
+    iResult = sendto(serverSocket1, secret_message, strlen(secret_message), 0,
+        (SOCKADDR*)&clientAddr, sizeof(clientAddr));
+    if (iResult == SOCKET_ERROR)
+    {
+        printf("sendto failed with error: %d\n", WSAGetLastError());
+        closesocket(serverSocket1);
+        closesocket(serverSocket2);
+        WSACleanup();
+        return 1;
+    }
+    iResult = sendto(serverSocket2, secret_message, strlen(secret_message), 0,
+        (SOCKADDR*)&clientAddr2, sizeof(clientAddr2));
+    if (iResult == SOCKET_ERROR)
+    {
+        printf("sendto failed with error: %d\n", WSAGetLastError());
+        closesocket(serverSocket1);
+        closesocket(serverSocket2);
+        WSACleanup();
+        return 1;
+    }
+
+    //***Saljem zadatu rec
+    iResult = sendto(serverSocket1, zadRec, strlen(zadRec), 0,
+        (SOCKADDR*)&clientAddr, sizeof(clientAddr));
+    if (iResult == SOCKET_ERROR)
+    {
+        printf("sendto failed with error: %d\n", WSAGetLastError());
+        closesocket(serverSocket1);
+        closesocket(serverSocket2);
+        WSACleanup();
+        return 1;
+    }
+    iResult = sendto(serverSocket2, zadRec, strlen(zadRec), 0,
+        (SOCKADDR*)&clientAddr2, sizeof(clientAddr2));
+    if (iResult == SOCKET_ERROR)
+    {
+        printf("sendto failed with error: %d\n", WSAGetLastError());
+        closesocket(serverSocket1);
+        closesocket(serverSocket2);
+        WSACleanup();
+        return 1;
+    }
+    //***ne blokirajuci rezim
+    unsigned long mode = 1; //non-blocking mode
+    iResult = ioctlsocket(serverSocket1, FIONBIO, &mode);
+    if (iResult != NO_ERROR)
+        printf("ioctlsocket failed with error: %ld\n", iResult);
+    iResult = ioctlsocket(serverSocket2, FIONBIO, &mode);
+    if (iResult != NO_ERROR)
+        printf("ioctlsocket failed with error: %ld\n", iResult);
+
+    for (int i = 0; i < strlen(zadRec); i++) {
+        pogRec[i] = '_';
+        pogRec2[i] = '_';
+
+    }
+
+    while (1) {
+
+        
+        pogRec[strlen(zadRec)] = '\0';
+        pogRec2[strlen(zadRec)] = '\0';
+
+        fd_set readfds;
+        FD_ZERO(&readfds);
+        FD_SET(serverSocket1, &readfds);
+        FD_SET(serverSocket2, &readfds);
+
+        fd_set writefds;
+        FD_ZERO(&writefds);
+        FD_SET(serverSocket1, &writefds);
+        FD_SET(serverSocket2, &writefds);
+
+        int sResult = select(0, &readfds, &writefds, NULL, NULL);
+        if (sResult == SOCKET_ERROR) {
+            printf("Select failed with error: %d\n", WSAGetLastError());
+            closesocket(serverSocket1);
+            closesocket(serverSocket2);
+            WSACleanup();
+            return 1;
+        }
+        else if (sResult > 0) {
+            if (FD_ISSET(serverSocket1, &readfds)) {
+                iResult = recvfrom(serverSocket1, dataBuffer, BUFFER_SIZE, 0, (SOCKADDR*)&clientAddr,
+                    &senderAddrSize);
+                if (iResult == SOCKET_ERROR) {
+                    printf("Greska pri prijemu poruke");
+                    continue;
+                }
+                dataBuffer[iResult] = '\0';
+                printf("Klijent 1: %s\n", dataBuffer);
+
+                if (strcmp(dataBuffer, "Pogodjena je rec") == 0) {
+                    iResult = sendto(serverSocket2, dataBuffer, strlen(dataBuffer), 0,
+                        (SOCKADDR*)&clientAddr2, sizeof(clientAddr2));
+                    if (iResult == SOCKET_ERROR)
+                    {
+                        printf("sendto failed with error: %d\n", WSAGetLastError());
+                        break;
+                    }
+                }
+
+                for (int j = 0; j < strlen(zadRec); j++) {
+                    for (int k = 0; k < strlen(dataBuffer); k++) {
+                        if (dataBuffer[k] == zadRec[j]) {
+                            pogRec[j] = zadRec[j];
+                        }
+                    }
+                }
+
+                if (FD_ISSET(serverSocket1, &writefds)) {
+                    iResult = sendto(serverSocket1, pogRec, strlen(pogRec), 0,
+                        (SOCKADDR*)&clientAddr, sizeof(clientAddr));
+                    if (iResult == SOCKET_ERROR)
+                    {
+                        printf("sendto failed with error: %d\n", WSAGetLastError());
+                        continue;
+                    }
+                }
+            }
+
+
+
+
+            if (FD_ISSET(serverSocket2, &readfds)) {
+                iResult = recvfrom(serverSocket2, dataBuffer, BUFFER_SIZE, 0, (SOCKADDR*)&clientAddr2,
+                    &senderAddrSize);
+                if (iResult == SOCKET_ERROR) {
+                    printf("Greska pri prijemu poruke");
+                    continue;
+                }
+                dataBuffer[iResult] = '\0';
+                printf("Klijent 2: %s\n", dataBuffer);
+
+                if (strcmp(dataBuffer, "Pogodjena je rec") == 0) {
+                    iResult = sendto(serverSocket1, dataBuffer, strlen(dataBuffer), 0,
+                        (SOCKADDR*)&clientAddr, sizeof(clientAddr));
+                    if (iResult == SOCKET_ERROR)
+                    {
+                        printf("sendto failed with error: %d\n", WSAGetLastError());
+                        break;
+                    }
+                }
+
+                for (int j = 0; j < strlen(zadRec); j++) {
+                    for (int k = 0; k < strlen(dataBuffer); k++) {
+                        if (dataBuffer[k] == zadRec[j]) {
+                            pogRec2[j] = zadRec[j];
+                        }
+                    }    
+                }
+
+                if (FD_ISSET(serverSocket2, &writefds)) {
+                    iResult = sendto(serverSocket2, pogRec2, strlen(pogRec2), 0,
+                        (SOCKADDR*)&clientAddr2, sizeof(clientAddr2));
+                    if (iResult == SOCKET_ERROR)
+                    {
+                        printf("sendto failed with error: %d\n", WSAGetLastError());
+                        continue;
+                    }
+                }
+            }
+        }
+
+    }
+
+
+
+    printf("Press any to exit..");
+    _getch();
+
+    iResult = closesocket(serverSocket1);
+    if (iResult == SOCKET_ERROR) {
+        printf("Greska pri zatvaranju socketa");
+        closesocket(serverSocket1);
+        closesocket(serverSocket2);
+        WSACleanup();
+        return 1;
+    }
+
+    iResult = closesocket(serverSocket2);
+    if (iResult == SOCKET_ERROR) {
+        printf("Greska pri zatvaranju socketa");
+        closesocket(serverSocket2);
+        closesocket(serverSocket1);
+        WSACleanup();
+        return 1;
+    }
+
+    WSACleanup();
+    return 0;
+}
