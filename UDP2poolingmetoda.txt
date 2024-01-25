@@ -1,0 +1,362 @@
+--klijent
+#define _WINSOCK_DEPRECATED_NO_WARNINGS
+#define WIN32_LEAN_AND_MEAN
+#define _CTR_SECURE_NO_WARNINGS
+
+#include <windows.h>
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include "conio.h"
+
+#pragma comment (lib, "Ws2_32.lib")
+#pragma comment (lib, "Mswsock.lib")
+#pragma comment (lib, "AdvApi32.lib")
+
+#define SERVER_IP_ADDRESS "127.0.0.1"		// IPv4 address of server
+#define BUFFER_SIZE 512						// Size of buffer that will be used for sending and receiving messages to client
+
+struct transakcija {
+	short broj_racuna;
+	char tip_transakcije[10];
+	short suma;
+};
+
+int main() {
+	WSADATA wsaData;
+	if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0)
+	{
+		printf("WSAStartup failed with error: %d\n", WSAGetLastError());
+		return 1;
+	}
+	char dataBuffer[BUFFER_SIZE];
+	int iResult;
+
+	SOCKET clientSocket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+
+	unsigned short port;
+	printf("unesite broj porta (21000 | 21001) ");
+	gets_s(dataBuffer, BUFFER_SIZE);
+	port = atoi(dataBuffer);
+
+	sockaddr_in serverAddress;
+	serverAddress.sin_family = AF_INET;
+	serverAddress.sin_port = htons(port);
+	serverAddress.sin_addr.s_addr = inet_addr(SERVER_IP_ADDRESS);
+
+	iResult = sendto(clientSocket, "Prijava", strlen("Prijava"), 0,
+		(SOCKADDR*)&serverAddress, sizeof(serverAddress));
+	if (iResult < 0) {
+		printf("doslo je do greske kod slanja poruke Prijava\n");
+		return -1;
+	}
+
+	iResult = recvfrom(clientSocket, dataBuffer, BUFFER_SIZE, 0,
+		NULL, NULL);
+	if (iResult > 0) {
+		dataBuffer[iResult] = '\0';
+		printf("sa servera stiglo: %s", dataBuffer);
+	}
+	int maksimalan_broj_racuna;
+	iResult = recvfrom(clientSocket, dataBuffer, BUFFER_SIZE, 0, NULL, NULL);
+	if (iResult > 0) {
+		dataBuffer[iResult] = '\0';
+		printf("maks broj racuna je %s\n", dataBuffer);
+		maksimalan_broj_racuna = atoi(dataBuffer);
+	}
+
+	transakcija t;
+	/*struct transakcija {
+		short broj_racuna;
+		char tip_transakcije[10];
+		short suma;		*/
+	short br_rac;
+	short sum;
+	do {
+		do {
+			printf("unesite broj racuna ");
+			scanf_s("%d", &br_rac);
+		} while (br_rac > maksimalan_broj_racuna || br_rac < 0);
+
+		getchar();		//ovaj get char spasava zivot iz NEKOG razloga nemam pojma zasto al bez njega se udebili totalno
+		t.broj_racuna = htons(br_rac);
+		
+		do {
+			printf("unesite tip transakcije (uplata | isplata) ");
+			gets_s(dataBuffer, BUFFER_SIZE);
+		} while ((strcmp(dataBuffer, "uplata") != 0) && (strcmp(dataBuffer, "isplata") !=0));
+
+		strcpy_s(t.tip_transakcije, dataBuffer);
+		do {
+			printf("unesi sumu ");
+			scanf_s("%d", &sum);
+		} while (sum > 50000);
+		t.suma = htons(sum);
+		getchar();
+
+		if (!strcmp(dataBuffer, "kraj")) {
+			printf("game over\n");
+			shutdown(clientSocket, SD_BOTH);
+			closesocket(clientSocket);
+			WSACleanup();
+			return -666;
+		}
+
+		iResult = sendto(clientSocket, (char*)&t, sizeof(transakcija), 0
+			, (SOCKADDR*)&serverAddress, sizeof(serverAddress));
+
+		//poslednja tacka u zadatku, primanje poruke IZVRSENA ili NIJE IZVRSENA
+		iResult = recvfrom(clientSocket, dataBuffer, BUFFER_SIZE, 0, NULL, NULL);
+		dataBuffer[iResult] = '\0';
+		printf("transakcija - %s\n", dataBuffer);
+
+	} while (true);
+
+	closesocket(clientSocket);
+	WSACleanup();
+	return 0;
+}
+--server
+// UDP server that use non-blocking sockets
+#define _WINSOCK_DEPRECATED_NO_WARNINGS
+#define WIN32_LEAN_AND_MEAN
+
+#include <windows.h>
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include "conio.h"
+
+#pragma comment (lib, "Ws2_32.lib")
+#pragma comment (lib, "Mswsock.lib")
+#pragma comment (lib, "AdvApi32.lib")
+
+// Port numbers of server that will be used for communication with clients
+#define SERVER_PORT1 21000	
+#define SERVER_PORT2 21001
+
+// Size of buffer that will be used for sending and receiving messages to clients
+#define BUFFER_SIZE 512		
+
+
+struct transakcija {
+	short broj_racuna;
+	char tip_transakcije[10];
+	short suma;
+};
+
+
+int main() {
+	WSADATA wsaData;
+	if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0)
+	{
+		printf("WSAStartup failed with error: %d\n", WSAGetLastError());
+		return 1;
+	}
+	char dataBuffer[BUFFER_SIZE];
+	char dataBuffer2[BUFFER_SIZE];
+	int iResult;
+
+	int brRacuna;
+	printf("Unesi broj racuna ");
+	gets_s(dataBuffer, BUFFER_SIZE);
+	brRacuna = atoi(dataBuffer);
+
+	int maxSredstvaRacuna;
+	printf("unesi maksimalnu kolicinu sredstava koja moze biti na racunu ");
+	gets_s(dataBuffer, BUFFER_SIZE);
+	maxSredstvaRacuna = atoi(dataBuffer);
+
+	SOCKET serverSocket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+	sockaddr_in serverAddress;
+	serverAddress.sin_family = AF_INET;
+	serverAddress.sin_port = htons(SERVER_PORT1);
+	serverAddress.sin_addr.s_addr = htonl(INADDR_ANY);
+
+	SOCKET serverSocket2 = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+	sockaddr_in serverAddress2;
+	serverAddress2.sin_family = AF_INET;
+	serverAddress2.sin_port = htons(SERVER_PORT2);
+	serverAddress2.sin_addr.s_addr = htonl(INADDR_ANY);
+
+	iResult = bind(serverSocket, (SOCKADDR*)&serverAddress, sizeof(serverAddress));
+
+	iResult = bind(serverSocket2, (SOCKADDR*)&serverAddress2, sizeof(serverAddress2));
+
+	sockaddr_in clientAddress;
+	sockaddr_in clientAddress2;
+	int clientAddressSize = sizeof(clientAddress);
+	int clientAddress2Size = sizeof(clientAddress2);
+
+
+	iResult = recvfrom(serverSocket, dataBuffer, BUFFER_SIZE, 0,
+		(SOCKADDR*)&clientAddress, &clientAddressSize);
+	dataBuffer[iResult] = '\0';
+	if (strcmp(dataBuffer, "Prijava") == 0) {
+		sprintf_s(dataBuffer,"na servisu postoji %d racuna, limit svakog je %d\n",
+			brRacuna, maxSredstvaRacuna);
+		
+		iResult = sendto(serverSocket, dataBuffer, strlen(dataBuffer), 0,
+			(SOCKADDR*)&clientAddress, sizeof(clientAddress));
+		//salje se i broj racuna da bi mogli da proverimo da li je on u rasponu od 1 do broja racuna na servisu
+		char broj_racuna_string[10];
+		_itoa_s(brRacuna, broj_racuna_string, 10);
+		iResult = sendto(serverSocket, broj_racuna_string, strlen(broj_racuna_string), 0
+			, (SOCKADDR*)&clientAddress, sizeof(clientAddress));
+	}
+
+	iResult = recvfrom(serverSocket2, dataBuffer2, BUFFER_SIZE, 0,
+		(SOCKADDR*)&clientAddress2, &clientAddress2Size);
+	dataBuffer2[iResult] = '\0';
+	if (strcmp(dataBuffer2, "Prijava") == 0) {
+		sprintf_s(dataBuffer2,"na servisu postoji %d racuna, limit svakog je %d\n",
+			brRacuna, maxSredstvaRacuna);
+		iResult = sendto(serverSocket2, dataBuffer2, strlen(dataBuffer2), 0,
+			(SOCKADDR*)&clientAddress2, sizeof(clientAddress2));
+		//salje se i broj racuna da bi mogli da proverimo da li je on u rasponu od 1 do broja racuna na servisu
+		char broj_racuna_string[10];
+		_itoa_s(brRacuna, broj_racuna_string, 10);
+		iResult = sendto(serverSocket, broj_racuna_string, strlen(broj_racuna_string),
+			0, (SOCKADDR*)&clientAddress2, sizeof(clientAddress2));
+	}
+
+
+	unsigned long mode = 1;
+	iResult = ioctlsocket(serverSocket, FIONBIO, &mode);
+	if (iResult != NO_ERROR) {
+		printf("ioctlsocket mi sere\n");
+		return -1;
+	}
+	iResult = ioctlsocket(serverSocket2, FIONBIO, &mode);
+	if (iResult != NO_ERROR) {
+		printf("ioctlsocket pravi problem\n");
+		return -2;
+	}
+
+	transakcija* t;
+	int racuni[10];		//ako neko unese vise od 10 racuna treba mu glavu odrezati
+	for (int i = 0; i < 10; i++) {
+		racuni[i] = 1000;
+	}
+	bool uspesnost_transakcije1;
+	bool uspesnost_transakcije2;
+	do {
+		
+		iResult = recvfrom(serverSocket, dataBuffer, BUFFER_SIZE, 0,
+			(SOCKADDR*)&clientAddress, &clientAddressSize);
+		if (iResult != SOCKET_ERROR) {
+			dataBuffer[iResult] = '\0';
+			t = (transakcija*)dataBuffer;
+			printf("broj racuna je %d, tip transakcije je %s, suma je %d\n",
+				ntohs(t->broj_racuna), t->tip_transakcije, ntohs(t->suma));
+
+			if (strcmp(t->tip_transakcije, "uplata") == 0) {
+				racuni[ntohs(t->broj_racuna)] += ntohs(t->suma);
+				if (racuni[ntohs(t->broj_racuna)] > maxSredstvaRacuna) {
+					racuni[ntohs(t->broj_racuna)] -= ntohs(t->suma);
+					uspesnost_transakcije1 = false;//ako nakon dodavanja prekoracimo
+				}	//maksimalnu dozvoljenu vrednost onda samo umanijmo da bi vratili racuna na staro
+				else {
+					uspesnost_transakcije1 = true;
+				}
+				if (ntohs(t->suma) > 40000) {
+					Sleep(3000);
+				}
+			}
+			else if (strcmp(t->tip_transakcije, "isplata") == 0) {
+				racuni[ntohs(t->broj_racuna)] -= ntohs(t->suma);
+				if (racuni[ntohs(t->broj_racuna)] < 0) {
+					racuni[ntohs(t->broj_racuna)] += ntohs(t->suma);	
+					uspesnost_transakcije1 = false;		//ako cemo posle transakcije 
+				}	//da odemo u minus onda tu transakciju nije moguce izvrsiti pa samo vratimo to sto smo oduzeli
+				else {
+					uspesnost_transakcije1 = true;
+				}
+			}
+
+			if (uspesnost_transakcije1 == false) {
+				sendto(serverSocket, "NIJE IZVRSENA", strlen("NIJE IZVRSENA"), 0,
+					(SOCKADDR*)&clientAddress, sizeof(clientAddress));
+			}
+			else {
+				sendto(serverSocket, "IZVRSENA", strlen("IZVRSENA"), 0,
+					(SOCKADDR*)&clientAddress, sizeof(clientAddress));
+			}
+
+			for (int i = 0; i < brRacuna; i++) {
+				printf("iznos na racunu %d je %d\n", i + 1, racuni[i]);
+			}
+			
+		}else {
+			if (WSAGetLastError() == WSAEWOULDBLOCK) {
+				Sleep(1000);
+			}
+			else {
+				printf("doslo je do neke ogavne greske \n");
+				return -666;
+			}
+		}
+		iResult = recvfrom(serverSocket2, dataBuffer2, BUFFER_SIZE, 0,
+			(SOCKADDR*)&clientAddress2, &clientAddress2Size);
+		if (iResult != SOCKET_ERROR) {
+			dataBuffer2[iResult] = '\0';
+			t = (transakcija*)dataBuffer2;
+			printf("broj racuna je %d, tip transakcije je %s, suma je %d\n",
+				ntohs(t->broj_racuna), t->tip_transakcije, ntohs(t->suma));
+
+			if (strcmp(t->tip_transakcije, "uplata") == 0) {
+				racuni[ntohs(t->broj_racuna)] += ntohs(t->suma);
+				if (racuni[ntohs(t->broj_racuna)] > maxSredstvaRacuna) {
+					racuni[ntohs(t->broj_racuna)] -= ntohs(t->suma);	//ako nakon dodavanja prekoracimo
+					uspesnost_transakcije2 = false;
+				}
+				else {//maksimalnu dozvoljenu vrednost onda samo umanijmo da bi vratili racuna na staro
+					uspesnost_transakcije2 = true;
+				}
+				if (ntohs(t->suma) > 40000) {
+					Sleep(3000);
+				}
+			}
+			else if (strcmp(t->tip_transakcije, "isplata") == 0) {
+				racuni[ntohs(t->broj_racuna)] -= ntohs(t->suma);
+				if (racuni[ntohs(t->broj_racuna)] < 0) {
+					racuni[ntohs(t->broj_racuna)] += ntohs(t->suma);	//ako cemo posle transakcije 
+					uspesnost_transakcije2 = false;
+				}
+				else {	//da odemo u minus onda tu transakciju nije moguce izvrsiti pa samo vratimo to sto smo oduzeli
+					uspesnost_transakcije2 = true;
+				}
+			}
+
+			if (uspesnost_transakcije2 == false) {
+				sendto(serverSocket2, "NIJE IZVRSENA", strlen("NIJE IZVRSENA"), 0,
+					(SOCKADDR*)&clientAddress2, sizeof(clientAddress2));
+			}
+			else {
+				sendto(serverSocket2, "IZVRSENA", strlen("IZVRSENA"), 0,
+					(SOCKADDR*)&clientAddress2, sizeof(clientAddress2));
+			}
+
+			for (int i = 0; i < brRacuna; i++) {
+				printf("iznos na racunu %d je %d\n", i + 1, racuni[i]);
+			}
+		}else {
+			if (WSAGetLastError() == WSAEWOULDBLOCK) {
+				Sleep(1000);
+			}
+			else {
+				printf("doslo je do neke odvratne greske\n");
+				return -666;
+			}
+		}
+		
+	} while (true);
+
+	
+	closesocket(serverSocket);
+	closesocket(serverSocket2);
+	WSACleanup();
+	return 0;
+}
